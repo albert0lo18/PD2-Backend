@@ -1,0 +1,6 @@
+@PD2_Backend_HostAddress = http://localhost:5157
+
+GET {{PD2_Backend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
