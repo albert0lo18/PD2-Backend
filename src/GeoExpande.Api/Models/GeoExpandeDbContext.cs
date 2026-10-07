@@ -608,6 +608,8 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
                 .HasConstraintName("fk_usuarios_roles");
         });
 
+        modelBuilder.Entity<ZonaRecomendadaResult>().HasNoKey(); // Recomendaciones
+
         OnModelCreatingPartial(modelBuilder);
     }
 
