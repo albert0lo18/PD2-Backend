@@ -27,40 +27,67 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 6)
             return BadRequest("La contraseña debe tener al menos 6 caracteres.");
 
-        var correoExiste = await _context.Usuarios.AnyAsync(u => u.Correo == dto.Correo);
-        if (correoExiste)
-            return Conflict("Ya existe un usuario con ese correo.");
+        await using var transaction = await _context.Database.BeginTransactionAsync();
 
-        var defaultRoleName = _config["Auth:DefaultRoleName"] ?? "Usuario";
-        var rol = await _context.Roles.FirstOrDefaultAsync(r => r.Nombre == defaultRoleName);
-        if (rol is null)
-            return StatusCode(500, $"No existe el rol por defecto '{defaultRoleName}' en la tabla roles.");
-
-        var usuario = new Usuario
+        try
         {
-            Nombre = dto.Nombre,
-            Apellido = dto.Apellido,
-            Correo = dto.Correo,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
-            IdRol = rol.IdRol,
-            IdEmpresa = dto.IdEmpresa,
-            Activo = true
-        };
+            var correoExiste = await _context.Usuarios.AnyAsync(u => u.Correo == dto.Correo);
+            if (correoExiste)
+                return Conflict("Ya existe un usuario con ese correo.");
 
-        _context.Usuarios.Add(usuario);
-        await _context.SaveChangesAsync();
+            var defaultRoleName = _config["Auth:DefaultRoleName"] ?? "Usuario";
+            var rol = await _context.Roles.FirstOrDefaultAsync(r => r.Nombre == defaultRoleName);
+            if (rol is null)
+                return StatusCode(500, $"No existe el rol por defecto '{defaultRoleName}' en la tabla roles.");
 
-        var (token, expiresAt) = _tokenService.GenerateToken(usuario, rol.Nombre);
+            var empresa = new Empresa
+            {
+                RazonSocial = dto.RazonSocial,
+                NombreComercial = dto.NombreComercial,
+                IdSector = dto.IdSector,
+                IdGiro = dto.IdGiro,
+                DescripcionNegocio = dto.DescripcionNegocio,
+                CiudadBase = dto.CiudadBase,
+                Telefono = dto.Telefono,
+                SitioWeb = dto.SitioWeb
+            };
 
-        return Ok(new AuthResponseDto
+            _context.Empresas.Add(empresa);
+            await _context.SaveChangesAsync();
+
+            var usuario = new Usuario
+            {
+                Nombre = dto.Nombre,
+                Apellido = dto.Apellido,
+                Correo = dto.Correo,
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
+                IdRol = rol.IdRol,
+                IdEmpresa = empresa.IdEmpresa,
+                Activo = true
+            };
+
+            _context.Usuarios.Add(usuario);
+            await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
+
+            var (token, expiresAt) = _tokenService.GenerateToken(usuario, rol.Nombre);
+
+            return Ok(new AuthResponseDto
+            {
+                Token = token,
+                ExpiresAt = expiresAt,
+                IdUsuario = usuario.IdUsuario,
+                Nombre = usuario.Nombre,
+                Correo = usuario.Correo,
+                Rol = rol.Nombre
+            });
+        }
+        catch
         {
-            Token = token,
-            ExpiresAt = expiresAt,
-            IdUsuario = usuario.IdUsuario,
-            Nombre = usuario.Nombre,
-            Correo = usuario.Correo,
-            Rol = rol.Nombre
-        });
+            await transaction.RollbackAsync();
+            throw;
+        }
+
     }
 
     [HttpPost("login")]

@@ -3,10 +3,17 @@ namespace GeoExpande.Api.Dtos;
 public class RegisterRequestDto
 {
     public string Nombre { get; set; } = null!;
-    public string? Apellido { get; set; }
+    public string Apellido { get; set; } = null!;
     public string Correo { get; set; } = null!;
     public string Password { get; set; } = null!;
-    public int? IdEmpresa { get; set; }
+    public string RazonSocial { get; set; } = null!;
+    public string NombreComercial { get; set; } = null!;
+    public int IdSector { get; set; }
+    public int IdGiro { get; set; }
+    public string DescripcionNegocio { get; set; } = null!;
+    public string CiudadBase { get; set; } = null!;
+    public string Telefono { get; set; } = null!;
+    public string SitioWeb { get; set; } = null!;
 }
 
 public class LoginRequestDto
