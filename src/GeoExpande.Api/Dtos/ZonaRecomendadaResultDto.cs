@@ -3,7 +3,7 @@ public class ZonaRecomendadaResult
 {
     public int IdEstado { get; set; }
     public int IdMunicipio { get; set; }
-    public string NombreZona { get; set; }
+    public string NombreZona { get; set; } = string.Empty;
     public double Lat { get; set; }
     public double Lng { get; set; }
     public int? Poblacion { get; set; }
@@ -15,6 +15,6 @@ public class ZonaRecomendadaResult
     public decimal Puntuacion { get; set; }
     public decimal CuotaPresenciaEstimada { get; set; }
     public decimal DemandaEstimadaMensualMxn { get; set; }
-    public string NivelRiesgo { get; set; }
-    public string Recomendacion { get; set; }
+    public string? NivelRiesgo { get; set; }
+    public string? Recomendacion { get; set; }
 }
