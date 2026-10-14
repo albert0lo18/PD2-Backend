@@ -81,9 +81,19 @@ public class EmpresaController : ControllerBase
         if (usuario?.IdEmpresa is not int empresaId)
             return NotFound("El usuario no tiene una empresa asociada.");
 
+        var idGiroEmpresa = await _context.Empresas
+            .AsNoTracking()
+            .Where(empresa => empresa.IdEmpresa == empresaId)
+            .Select(empresa => empresa.IdGiro)
+            .FirstOrDefaultAsync();
+        if (idGiroEmpresa is not int giroEmpresa)
+            return BadRequest("La empresa no tiene un giro configurado en su perfil.");
+        if (request.IdGiro != giroEmpresa)
+            return BadRequest("El giro solicitado debe coincidir con el giro configurado en el perfil de la empresa.");
+
         var giro = await _context.Giros
             .AsNoTracking()
-            .FirstOrDefaultAsync(giro => giro.IdGiro == request.IdGiro);
+            .FirstOrDefaultAsync(giro => giro.IdGiro == giroEmpresa);
         if (giro is null)
             return BadRequest("El giro indicado no existe.");
 
