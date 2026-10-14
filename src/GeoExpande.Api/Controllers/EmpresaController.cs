@@ -81,26 +81,126 @@ public class EmpresaController : ControllerBase
         if (usuario?.IdEmpresa is not int empresaId)
             return NotFound("El usuario no tiene una empresa asociada.");
 
-        var giroExiste = await _context.Giros
+        var giro = await _context.Giros
             .AsNoTracking()
-            .AnyAsync(giro => giro.IdGiro == request.IdGiro);
-        if (!giroExiste)
+            .FirstOrDefaultAsync(giro => giro.IdGiro == request.IdGiro);
+        if (giro is null)
             return BadRequest("El giro indicado no existe.");
 
-        var recomendaciones = await _context.RecomendacionesZonas
-            .FromSqlInterpolated($"""
-                SELECT id_estado, id_municipio, nombre_zona, lat, lng, poblacion,
-                       competidores_cercanos, negocios_cercanos_total,
-                       puntuacion_competencia, puntuacion_poblacion,
-                       puntuacion_accesibilidad, puntuacion,
-                       cuota_presencia_estimada, demanda_estimada_mensual_mxn,
-                       nivel_riesgo, recomendacion
-                FROM fn_recomendar_zonas({request.IdGiro}, {empresaId}, {request.RadioKm})
-                """)
-            .AsNoTracking()
-            .ToListAsync();
+        var radioKm = request.RadioKm
+            ?? await _context.PreferenciasExpansions
+                .AsNoTracking()
+                .Where(preferencia => preferencia.IdEmpresa == empresaId)
+                .OrderByDescending(preferencia => preferencia.FechaActualizacion)
+                .Select(preferencia => preferencia.RadioAnalisisKm)
+                .FirstOrDefaultAsync()
+            ?? 10m;
 
-        return Ok(recomendaciones);
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        try
+        {
+            var ahora = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+            var analisis = new Analisi
+            {
+                IdEmpresa = empresaId,
+                IdUsuario = userId,
+                Nombre = $"Recomendaciones de zonas - {giro.Nombre}",
+                Descripcion = "Búsqueda de expansión. Se guardaron las cinco zonas con mayor puntuación.",
+                Estado = "Completado",
+                FechaInicio = ahora,
+                FechaFinalizacion = ahora
+            };
+            _context.Analises.Add(analisis);
+            await _context.SaveChangesAsync();
+
+            var escenario = new EscenariosExpansion
+            {
+                IdAnalisis = analisis.IdAnalisis,
+                Nombre = "Top 5 zonas recomendadas",
+                Descripcion = "Las cinco zonas con mayor puntuación calculada para el giro seleccionado.",
+                RadioBusquedaKm = radioKm
+            };
+            _context.EscenariosExpansions.Add(escenario);
+            await _context.SaveChangesAsync();
+
+            var filasInsertadas = await _context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO ubicaciones_recomendadas (
+                    id_escenario, id_estado, id_municipio, id_localidad,
+                    nombre_ubicacion, ubicacion, puntuacion,
+                    puntuacion_competencia, puntuacion_poblacion,
+                    puntuacion_proveedores, puntuacion_accesibilidad,
+                    competidores_cercanos, proveedores_cercanos,
+                    cuota_presencia_estimada, demanda_estimada_mensual_mxn,
+                    nivel_riesgo, recomendacion, ranking
+                )
+                SELECT
+                    {escenario.IdEscenario}, z.id_estado, z.id_municipio, NULL,
+                    z.nombre_zona, z.ubicacion_zona, z.puntuacion,
+                    z.puntuacion_competencia, z.puntuacion_poblacion,
+                    NULL, z.puntuacion_accesibilidad,
+                    z.competidores_cercanos::integer, NULL,
+                    z.cuota_presencia_estimada, z.demanda_estimada_mensual_mxn,
+                    z.nivel_riesgo, z.recomendacion,
+                    ROW_NUMBER() OVER (ORDER BY z.puntuacion DESC)::integer
+                FROM fn_recomendar_zonas({request.IdGiro}, {empresaId}, {radioKm}) z
+                ORDER BY z.puntuacion DESC
+                LIMIT 5
+                """);
+
+            if (filasInsertadas == 0)
+            {
+                await transaction.RollbackAsync();
+                return NotFound("No se encontraron zonas para generar recomendaciones.");
+            }
+
+            var recomendaciones = await _context.Database
+                .SqlQuery<RecomendacionGuardadaDto>($"""
+                    SELECT
+                        z.id_ubicacion AS "IdUbicacion",
+                        z.id_estado AS "IdEstado",
+                        e.nombre AS "Estado",
+                        z.id_municipio AS "IdMunicipio",
+                        m.nombre AS "Municipio",
+                        z.id_localidad AS "IdLocalidad",
+                        z.nombre_ubicacion AS "NombreUbicacion",
+                        ST_Y(z.ubicacion::geometry) AS "Lat",
+                        ST_X(z.ubicacion::geometry) AS "Lng",
+                        z.puntuacion AS "Puntuacion",
+                        z.puntuacion_competencia AS "PuntuacionCompetencia",
+                        z.puntuacion_poblacion AS "PuntuacionPoblacion",
+                        z.puntuacion_proveedores AS "PuntuacionProveedores",
+                        z.puntuacion_accesibilidad AS "PuntuacionAccesibilidad",
+                        z.competidores_cercanos AS "CompetidoresCercanos",
+                        z.proveedores_cercanos AS "ProveedoresCercanos",
+                        z.cuota_presencia_estimada AS "CuotaPresenciaEstimada",
+                        z.demanda_estimada_mensual_mxn AS "DemandaEstimadaMensualMxn",
+                        z.nivel_riesgo AS "NivelRiesgo",
+                        z.recomendacion AS "Recomendacion",
+                        z.ranking AS "Ranking",
+                        z.fecha_calculo AS "FechaCalculo"
+                    FROM ubicaciones_recomendadas z
+                    JOIN estados e ON e.id_estado = z.id_estado
+                    JOIN municipios m ON m.id_municipio = z.id_municipio
+                    WHERE z.id_escenario = {escenario.IdEscenario}
+                    ORDER BY z.ranking
+                    """)
+                .ToListAsync();
+
+            await transaction.CommitAsync();
+            return Ok(new
+            {
+                idAnalisis = analisis.IdAnalisis,
+                idEscenario = escenario.IdEscenario,
+                zonasGuardadas = recomendaciones.Count,
+                recomendaciones
+            });
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+
     }
 
     private bool TryGetAuthenticatedUserId(out int userId)
