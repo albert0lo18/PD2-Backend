@@ -68,6 +68,41 @@ public class EmpresaController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("recomendar-zonas")]
+    public async Task<IActionResult> RecomendarZonas([FromQuery] RecomendarZonasRequestDto request)
+    {
+        if (!TryGetAuthenticatedUserId(out var userId))
+            return Unauthorized();
+
+        var usuario = await _context.Usuarios
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.IdUsuario == userId);
+
+        if (usuario?.IdEmpresa is not int empresaId)
+            return NotFound("El usuario no tiene una empresa asociada.");
+
+        var giroExiste = await _context.Giros
+            .AsNoTracking()
+            .AnyAsync(giro => giro.IdGiro == request.IdGiro);
+        if (!giroExiste)
+            return BadRequest("El giro indicado no existe.");
+
+        var recomendaciones = await _context.RecomendacionesZonas
+            .FromSqlInterpolated($"""
+                SELECT id_estado, id_municipio, nombre_zona, lat, lng, poblacion,
+                       competidores_cercanos, negocios_cercanos_total,
+                       puntuacion_competencia, puntuacion_poblacion,
+                       puntuacion_accesibilidad, puntuacion,
+                       cuota_presencia_estimada, demanda_estimada_mensual_mxn,
+                       nivel_riesgo, recomendacion
+                FROM fn_recomendar_zonas({request.IdGiro}, {empresaId}, {request.RadioKm})
+                """)
+            .AsNoTracking()
+            .ToListAsync();
+
+        return Ok(recomendaciones);
+    }
+
     private bool TryGetAuthenticatedUserId(out int userId)
     {
         var userIdClaim = User.FindFirstValue(JwtRegisteredClaimNames.Sub)

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
+using GeoExpande.Api.Dtos;
 
 namespace GeoExpande.Api.Models;
 
@@ -39,6 +40,8 @@ public partial class GeoExpandeDbContext : DbContext
 
     public virtual DbSet<UbicacionesRecomendada> UbicacionesRecomendadas { get; set; }
 
+    public virtual DbSet<RecomendacionZonaDto> RecomendacionesZonas => Set<RecomendacionZonaDto>();
+
     public virtual DbSet<Usuario> Usuarios { get; set; }
 
 protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
@@ -49,6 +52,27 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<RecomendacionZonaDto>(entity =>
+        {
+            entity.HasNoKey();
+            entity.Property(e => e.IdEstado).HasColumnName("id_estado");
+            entity.Property(e => e.IdMunicipio).HasColumnName("id_municipio");
+            entity.Property(e => e.NombreZona).HasColumnName("nombre_zona");
+            entity.Property(e => e.Lat).HasColumnName("lat");
+            entity.Property(e => e.Lng).HasColumnName("lng");
+            entity.Property(e => e.Poblacion).HasColumnName("poblacion");
+            entity.Property(e => e.CompetidoresCercanos).HasColumnName("competidores_cercanos");
+            entity.Property(e => e.NegociosCercanosTotal).HasColumnName("negocios_cercanos_total");
+            entity.Property(e => e.PuntuacionCompetencia).HasColumnName("puntuacion_competencia");
+            entity.Property(e => e.PuntuacionPoblacion).HasColumnName("puntuacion_poblacion");
+            entity.Property(e => e.PuntuacionAccesibilidad).HasColumnName("puntuacion_accesibilidad");
+            entity.Property(e => e.Puntuacion).HasColumnName("puntuacion");
+            entity.Property(e => e.CuotaPresenciaEstimada).HasColumnName("cuota_presencia_estimada");
+            entity.Property(e => e.DemandaEstimadaMensualMxn).HasColumnName("demanda_estimada_mensual_mxn");
+            entity.Property(e => e.NivelRiesgo).HasColumnName("nivel_riesgo");
+            entity.Property(e => e.Recomendacion).HasColumnName("recomendacion");
+        });
+
         modelBuilder
             .HasPostgresEnum("auth", "aal_level", new[] { "aal1", "aal2", "aal3" })
             .HasPostgresEnum("auth", "code_challenge_method", new[] { "s256", "plain" })
