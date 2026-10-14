@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using GeoExpande.Api.Dtos;
 using GeoExpande.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -102,7 +103,43 @@ public class AnalisisController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(zonas);
+        var coordenadas = await _context.Database
+            .SqlQuery<UbicacionCoordenadasDto>($"""
+                SELECT
+                    z.id_ubicacion AS "IdUbicacion",
+                    ST_Y(z.ubicacion::geometry) AS "Lat",
+                    ST_X(z.ubicacion::geometry) AS "Lng"
+                FROM ubicaciones_recomendadas z
+                JOIN escenarios_expansion escenario ON escenario.id_escenario = z.id_escenario
+                WHERE escenario.id_analisis = {analisisId}
+                """)
+            .ToDictionaryAsync(punto => punto.IdUbicacion);
+
+        return Ok(zonas.Select(zona => new
+        {
+            zona.idUbicacion,
+            zona.idEstado,
+            zona.estado,
+            zona.idMunicipio,
+            zona.municipio,
+            zona.idLocalidad,
+            zona.nombre,
+            lat = coordenadas[ zona.idUbicacion ].Lat,
+            lng = coordenadas[ zona.idUbicacion ].Lng,
+            zona.puntuacion,
+            zona.puntuacionCompetencia,
+            zona.puntuacionPoblacion,
+            zona.puntuacionProveedores,
+            zona.puntuacionAccesibilidad,
+            zona.establecimientosCompetidores,
+            zona.proveedoresCercanos,
+            zona.cuotaPresenciaEstimadaPct,
+            zona.demandaEstimadaMensualMXN,
+            zona.nivelRiesgo,
+            zona.recomendacion,
+            zona.ranking,
+            zona.fechaCalculo
+        }));
     }
 
     private bool TryGetAuthenticatedUserId(out int userId)
