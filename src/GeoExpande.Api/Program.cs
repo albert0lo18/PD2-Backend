@@ -5,6 +5,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using Scalar.AspNetCore;
 using System.Text;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using GeoExpande.Api.Services;
 using Microsoft.AspNetCore.Authentication;
 using GeoExpande.Api.Models;
@@ -16,18 +18,54 @@ builder.Services.AddDbContext<GeoExpandeDbContext>(options =>
 
 builder.Services.AddScoped<TokenService>();
 
-var jwtKey = builder.Configuration["Jwt:Key"]!;
+var jwtSettings = JwtSettings.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(jwtSettings);
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var userIdValue = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                    ?? context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
+                var tokenId = (context.SecurityToken as JwtSecurityToken)?.Id
+                    ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
+
+                if (!int.TryParse(userIdValue, out var userId) || string.IsNullOrWhiteSpace(tokenId))
+                {
+                    context.Fail("El token no contiene los identificadores requeridos.");
+                    return;
+                }
+
+                await using var scope = context.HttpContext.RequestServices.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<GeoExpandeDbContext>();
+
+                var cuentaActiva = await db.Usuarios.AsNoTracking().AnyAsync(usuario =>
+                    usuario.IdUsuario == userId
+                    && usuario.Activo
+                    && (usuario.IdEmpresa == null || usuario.IdEmpresaNavigation!.Activo));
+                if (!cuentaActiva)
+                {
+                    context.Fail("La cuenta está desactivada.");
+                    return;
+                }
+
+                var tokenRevocado = await db.TokensRevocados.AsNoTracking()
+                    .AnyAsync(token => token.JtiHash == TokenRevocationService.HashTokenId(tokenId));
+                if (tokenRevocado)
+                    context.Fail("El token fue revocado.");
+            }
+        };
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidIssuer = jwtSettings.Issuer,
             ValidateAudience = true,
-            ValidAudience = builder.Configuration["Jwt:Audience"],
+            ValidAudience = jwtSettings.Audience,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSettings.Key)),
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero
         };

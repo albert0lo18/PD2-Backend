@@ -1,24 +1,54 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace GeoExpande.Api.Dtos;
 
 public class RegisterRequestDto
 {
+    [Required, StringLength(100, MinimumLength = 1)]
     public string Nombre { get; set; } = null!;
-    public string Apellido { get; set; } = null!;
+
+    [StringLength(100)]
+    public string? Apellido { get; set; }
+
+    [Required, EmailAddress, StringLength(150)]
     public string Correo { get; set; } = null!;
+
+    [Required, StringLength(72, MinimumLength = 12)]
     public string Password { get; set; } = null!;
-    public string RazonSocial { get; set; } = null!;
+
+    [StringLength(250)]
+    public string? RazonSocial { get; set; }
+
+    [Required, StringLength(200, MinimumLength = 1)]
     public string NombreComercial { get; set; } = null!;
+
+    [Range(1, int.MaxValue)]
     public int IdSector { get; set; }
+
+    [Range(1, int.MaxValue)]
     public int IdGiro { get; set; }
-    public string DescripcionNegocio { get; set; } = null!;
-    public string CiudadBase { get; set; } = null!;
-    public string Telefono { get; set; } = null!;
-    public string SitioWeb { get; set; } = null!;
+
+    [StringLength(1000)]
+    public string? DescripcionNegocio { get; set; }
+
+    [StringLength(150)]
+    public string? CiudadBase { get; set; }
+
+    [StringLength(20)]
+    [RegularExpression(@"^[0-9+().\-\s]*$", ErrorMessage = "El teléfono contiene caracteres no válidos.")]
+    public string? Telefono { get; set; }
+
+    [StringLength(250)]
+    [Url]
+    public string? SitioWeb { get; set; }
 }
 
 public class LoginRequestDto
 {
+    [Required, EmailAddress, StringLength(150)]
     public string Correo { get; set; } = null!;
+
+    [Required, StringLength(72, MinimumLength = 1)]
     public string Password { get; set; } = null!;
 }
 
