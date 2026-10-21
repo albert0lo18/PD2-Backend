@@ -1,8 +1,12 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
+using GeoExpande.Api.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using GeoExpande.Api.Dtos;
 using GeoExpande.Api.Models;
-using GeoExpande.Api.Services;
 
 namespace GeoExpande.Api.Controllers;
 
@@ -24,14 +28,32 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponseDto>> Register(RegisterRequestDto dto)
     {
-        if (string.IsNullOrWhiteSpace(dto.Password) || dto.Password.Length < 6)
-            return BadRequest("La contraseña debe tener al menos 6 caracteres.");
+        if (Encoding.UTF8.GetByteCount(dto.Password) > 72)
+            return BadRequest("La contraseña no puede superar 72 bytes en UTF-8.");
+
+        var correoNormalizado = dto.Correo.Trim().ToLowerInvariant();
+        dto.Nombre = dto.Nombre.Trim();
+        dto.Apellido = dto.Apellido?.Trim();
+        dto.RazonSocial = dto.RazonSocial?.Trim();
+        dto.NombreComercial = dto.NombreComercial.Trim();
+        dto.DescripcionNegocio = dto.DescripcionNegocio?.Trim();
+        dto.CiudadBase = dto.CiudadBase?.Trim();
+        dto.Telefono = dto.Telefono?.Trim();
+        dto.SitioWeb = dto.SitioWeb?.Trim();
+
+        var giroValido = await _context.Giros.AnyAsync(giro =>
+            giro.IdGiro == dto.IdGiro
+            && giro.IdSector == dto.IdSector
+            && giro.Activo
+            && giro.IdSectorNavigation.Activo);
+        if (!giroValido)
+            return BadRequest("El giro seleccionado no existe, está inactivo o no pertenece al sector indicado.");
 
         await using var transaction = await _context.Database.BeginTransactionAsync();
 
         try
         {
-            var correoExiste = await _context.Usuarios.AnyAsync(u => u.Correo == dto.Correo);
+            var correoExiste = await _context.Usuarios.AnyAsync(u => u.Correo.ToLower() == correoNormalizado);
             if (correoExiste)
                 return Conflict("Ya existe un usuario con ese correo.");
 
@@ -59,7 +81,7 @@ public class AuthController : ControllerBase
             {
                 Nombre = dto.Nombre,
                 Apellido = dto.Apellido,
-                Correo = dto.Correo,
+                Correo = correoNormalizado,
                 PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
                 IdRol = rol.IdRol,
                 IdEmpresa = empresa.IdEmpresa,
@@ -93,9 +115,13 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<ActionResult<AuthResponseDto>> Login(LoginRequestDto dto)
     {
+        if (Encoding.UTF8.GetByteCount(dto.Password) > 72)
+            return Unauthorized("Correo o contraseña incorrectos.");
+
+        var correoNormalizado = dto.Correo.Trim().ToLowerInvariant();
         var usuario = await _context.Usuarios
             .Include(u => u.IdRolNavigation)
-            .FirstOrDefaultAsync(u => u.Correo == dto.Correo);
+            .FirstOrDefaultAsync(u => u.Correo.ToLower() == correoNormalizado);
 
         if (usuario is null || !usuario.Activo)
             return Unauthorized("Correo o contraseña incorrectos.");
@@ -118,5 +144,43 @@ public class AuthController : ControllerBase
             Correo = usuario.Correo,
             Rol = usuario.IdRolNavigation.Nombre
         });
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout()
+    {
+        var authorization = Request.Headers["Authorization"].ToString();
+        if (!authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return Unauthorized();
+
+        var accessToken = authorization["Bearer ".Length..].Trim();
+        var parsedToken = new JwtSecurityTokenHandler().ReadJwtToken(accessToken);
+        var tokenId = parsedToken.Id;
+        var subject = parsedToken.Subject;
+
+        if (string.IsNullOrWhiteSpace(tokenId)
+            || !int.TryParse(subject, out var userId)
+            || !int.TryParse(User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier), out var authenticatedUserId)
+            || authenticatedUserId != userId
+            || parsedToken.ValidTo <= DateTime.UtcNow)
+        {
+            return Unauthorized();
+        }
+
+        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        await _context.TokensRevocados
+            .Where(token => token.ExpiraEn <= now)
+            .ExecuteDeleteAsync();
+
+        var jtiHash = TokenRevocationService.HashTokenId(tokenId);
+        await _context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO tokens_revocados (jti_hash, id_usuario, fecha_revocacion, expira_en)
+            VALUES ({jtiHash}, {userId}, {now}, {DateTime.SpecifyKind(parsedToken.ValidTo, DateTimeKind.Unspecified)})
+            ON CONFLICT (jti_hash) DO NOTHING
+            """);
+
+        return NoContent();
     }
 }

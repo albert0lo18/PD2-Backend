@@ -34,6 +34,8 @@ public partial class GeoExpandeDbContext : DbContext
 
     public virtual DbSet<PreferenciasExpansion> PreferenciasExpansions { get; set; }
 
+    public virtual DbSet<TokenRevocado> TokensRevocados { get; set; }
+
     public virtual DbSet<Role> Roles { get; set; }
 
     public virtual DbSet<Sectore> Sectores { get; set; }
@@ -52,6 +54,28 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<TokenRevocado>(entity =>
+        {
+            entity.HasKey(token => token.JtiHash).HasName("tokens_revocados_pkey");
+            entity.ToTable("tokens_revocados");
+            entity.Property(token => token.JtiHash)
+                .HasMaxLength(64)
+                .HasColumnName("jti_hash");
+            entity.Property(token => token.IdUsuario).HasColumnName("id_usuario");
+            entity.Property(token => token.FechaRevocacion)
+                .HasColumnType("timestamp without time zone")
+                .HasColumnName("fecha_revocacion");
+            entity.Property(token => token.ExpiraEn)
+                .HasColumnType("timestamp without time zone")
+                .HasColumnName("expira_en");
+            entity.HasOne(token => token.IdUsuarioNavigation)
+                .WithMany()
+                .HasForeignKey(token => token.IdUsuario)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk_tokens_revocados_usuarios");
+            entity.HasIndex(token => token.ExpiraEn, "ix_tokens_revocados_expira_en");
+        });
+
         modelBuilder.Entity<RecomendacionZonaDto>(entity =>
         {
             entity.HasNoKey();

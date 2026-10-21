@@ -1,6 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using GeoExpande.Api.Models;
 
@@ -8,24 +7,19 @@ namespace GeoExpande.Api.Services;
 
 public class TokenService
 {
-    private readonly IConfiguration _config;
+    private readonly JwtSettings _settings;
 
-    public TokenService(IConfiguration config)
+    public TokenService(JwtSettings settings)
     {
-        _config = config;
+        _settings = settings;
     }
 
     public (string Token, DateTime ExpiresAt) GenerateToken(Usuario usuario, string rolNombre)
     {
-        var jwtKey = _config["Jwt:Key"]
-            ?? throw new InvalidOperationException("Falta configurar Jwt:Key en User Secrets.");
-        var issuer = _config["Jwt:Issuer"];
-        var audience = _config["Jwt:Audience"];
-        var expiresMinutes = int.Parse(_config["Jwt:ExpiresMinutes"] ?? "60");
-
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, usuario.IdUsuario.ToString()),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")),
             new(JwtRegisteredClaimNames.Email, usuario.Correo),
             new(ClaimTypes.Name, usuario.Nombre),
             new(ClaimTypes.Role, rolNombre)
@@ -34,13 +28,13 @@ public class TokenService
         if (usuario.IdEmpresa.HasValue)
             claims.Add(new Claim("id_empresa", usuario.IdEmpresa.Value.ToString()));
 
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+        var key = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(_settings.Key));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expiresAt = DateTime.UtcNow.AddMinutes(expiresMinutes);
+        var expiresAt = DateTime.UtcNow.AddMinutes(_settings.ExpiresMinutes);
 
         var token = new JwtSecurityToken(
-            issuer: issuer,
-            audience: audience,
+            issuer: _settings.Issuer,
+            audience: _settings.Audience,
             claims: claims,
             expires: expiresAt,
             signingCredentials: creds);

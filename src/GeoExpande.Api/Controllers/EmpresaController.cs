@@ -68,6 +68,89 @@ public class EmpresaController : ControllerBase
         return NoContent();
     }
 
+    [HttpGet("preferencias")]
+    public async Task<ActionResult<PreferenciasExpansionDto>> GetPreferencias()
+    {
+        if (!TryGetAuthenticatedUserId(out var userId))
+            return Unauthorized();
+
+        var empresaId = await _context.Usuarios
+            .AsNoTracking()
+            .Where(usuario => usuario.IdUsuario == userId)
+            .Select(usuario => usuario.IdEmpresa)
+            .FirstOrDefaultAsync();
+
+        if (empresaId is not int id)
+            return NotFound("El usuario no tiene una empresa asociada.");
+
+        var preferencias = await _context.PreferenciasExpansions
+            .AsNoTracking()
+            .Where(preferencia => preferencia.IdEmpresa == id)
+            .OrderByDescending(preferencia => preferencia.FechaActualizacion)
+            .ThenByDescending(preferencia => preferencia.IdPreferencia)
+            .FirstOrDefaultAsync();
+
+        return Ok(ToPreferenciasDto(preferencias));
+    }
+
+    [HttpPut("preferencias")]
+    public async Task<ActionResult<PreferenciasExpansionDto>> ActualizarPreferencias(
+        PreferenciasExpansionDto dto)
+    {
+        if (!TryGetAuthenticatedUserId(out var userId))
+            return Unauthorized();
+
+        if (dto.PresupuestoMinimoMxn.HasValue
+            && dto.PresupuestoMaximoMxn.HasValue
+            && dto.PresupuestoMinimoMxn > dto.PresupuestoMaximoMxn)
+        {
+            return BadRequest("El presupuesto mínimo no puede ser mayor que el presupuesto máximo.");
+        }
+
+        var regiones = (dto.RegionesInteres ?? [])
+            .Where(region => !string.IsNullOrWhiteSpace(region))
+            .Select(region => region.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var regionesTexto = string.Join(", ", regiones);
+        if (regionesTexto.Length > 500)
+            return BadRequest("La lista de regiones de interés no puede superar 500 caracteres.");
+
+        var empresaId = await _context.Usuarios
+            .Where(usuario => usuario.IdUsuario == userId)
+            .Select(usuario => usuario.IdEmpresa)
+            .FirstOrDefaultAsync();
+
+        if (empresaId is not int id)
+            return NotFound("El usuario no tiene una empresa asociada.");
+
+        var preferencias = await _context.PreferenciasExpansions
+            .Where(preferencia => preferencia.IdEmpresa == id)
+            .OrderByDescending(preferencia => preferencia.FechaActualizacion)
+            .ThenByDescending(preferencia => preferencia.IdPreferencia)
+            .FirstOrDefaultAsync();
+
+        if (preferencias is null)
+        {
+            preferencias = new PreferenciasExpansion { IdEmpresa = id };
+            _context.PreferenciasExpansions.Add(preferencias);
+        }
+
+        preferencias.PresupuestoMinimo = dto.PresupuestoMinimoMxn;
+        preferencias.PresupuestoMaximo = dto.PresupuestoMaximoMxn;
+        preferencias.RadioAnalisisKm = dto.RadioBusquedaKm;
+        preferencias.NumeroUnidadesDeseadas = dto.NumeroUnidadesDeseadas;
+        preferencias.RegionesInteresTexto = regionesTexto;
+        preferencias.PrioridadCompetencia = dto.PrioridadCompetencia;
+        preferencias.PrioridadPoblacion = dto.PrioridadPoblacion;
+        preferencias.PrioridadProveedores = dto.PrioridadProveedores;
+        preferencias.PrioridadAccesibilidad = dto.PrioridadAccesibilidad;
+        preferencias.FechaActualizacion = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+
+        await _context.SaveChangesAsync();
+        return Ok(ToPreferenciasDto(preferencias));
+    }
+
     [HttpGet("recomendar-zonas")]
     public async Task<IActionResult> RecomendarZonas([FromQuery] RecomendarZonasRequestDto request)
     {
@@ -232,4 +315,28 @@ public class EmpresaController : ControllerBase
         Tamano = empresa.Tamano ?? string.Empty,
         DescripcionNegocio = empresa.DescripcionNegocio ?? string.Empty
     };
+
+    private static PreferenciasExpansionDto ToPreferenciasDto(PreferenciasExpansion? preferencias)
+    {
+        if (preferencias is null)
+            return new PreferenciasExpansionDto();
+
+        return new PreferenciasExpansionDto
+        {
+            PresupuestoMinimoMxn = preferencias.PresupuestoMinimo,
+            PresupuestoMaximoMxn = preferencias.PresupuestoMaximo,
+            RadioBusquedaKm = preferencias.RadioAnalisisKm,
+            NumeroUnidadesDeseadas = preferencias.NumeroUnidadesDeseadas,
+            RegionesInteres = string.IsNullOrWhiteSpace(preferencias.RegionesInteresTexto)
+                ? []
+                : preferencias.RegionesInteresTexto
+                    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+            PrioridadCompetencia = preferencias.PrioridadCompetencia,
+            PrioridadPoblacion = preferencias.PrioridadPoblacion,
+            PrioridadProveedores = preferencias.PrioridadProveedores,
+            PrioridadAccesibilidad = preferencias.PrioridadAccesibilidad
+        };
+    }
 }
