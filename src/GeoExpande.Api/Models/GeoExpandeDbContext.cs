@@ -63,10 +63,10 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
                 .HasColumnName("jti_hash");
             entity.Property(token => token.IdUsuario).HasColumnName("id_usuario");
             entity.Property(token => token.FechaRevocacion)
-                .HasColumnType("timestamp without time zone")
+                .HasColumnType("timestamp with time zone")
                 .HasColumnName("fecha_revocacion");
             entity.Property(token => token.ExpiraEn)
-                .HasColumnType("timestamp without time zone")
+                .HasColumnType("timestamp with time zone")
                 .HasColumnName("expira_en");
             entity.HasOne(token => token.IdUsuarioNavigation)
                 .WithMany()

@@ -169,7 +169,7 @@ public class AuthController : ControllerBase
             return Unauthorized();
         }
 
-        var now = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified);
+        var now = DateTime.UtcNow;
         await _context.TokensRevocados
             .Where(token => token.ExpiraEn <= now)
             .ExecuteDeleteAsync();
@@ -177,7 +177,7 @@ public class AuthController : ControllerBase
         var jtiHash = TokenRevocationService.HashTokenId(tokenId);
         await _context.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO tokens_revocados (jti_hash, id_usuario, fecha_revocacion, expira_en)
-            VALUES ({jtiHash}, {userId}, {now}, {DateTime.SpecifyKind(parsedToken.ValidTo, DateTimeKind.Unspecified)})
+            VALUES ({jtiHash}, {userId}, {now}, {DateTime.SpecifyKind(parsedToken.ValidTo, DateTimeKind.Utc)})
             ON CONFLICT (jti_hash) DO NOTHING
             """);
 

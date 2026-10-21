@@ -30,7 +30,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 var userIdValue = context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Sub)
                     ?? context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
                 var tokenId = (context.SecurityToken as JwtSecurityToken)?.Id
-                    ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti);
+                    ?? context.Principal?.FindFirstValue(JwtRegisteredClaimNames.Jti)
+                    ?? context.Principal?.FindFirstValue(ClaimTypes.SerialNumber);
 
                 if (!int.TryParse(userIdValue, out var userId) || string.IsNullOrWhiteSpace(tokenId))
                 {
