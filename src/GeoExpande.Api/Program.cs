@@ -17,6 +17,7 @@ builder.Services.AddDbContext<GeoExpandeDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<TokenService>();
+builder.Services.AddSingleton<ReportePdfBuilder>();
 
 var jwtSettings = JwtSettings.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(jwtSettings);

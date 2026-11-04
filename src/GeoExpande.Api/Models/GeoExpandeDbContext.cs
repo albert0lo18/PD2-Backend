@@ -36,6 +36,8 @@ public partial class GeoExpandeDbContext : DbContext
 
     public virtual DbSet<TokenRevocado> TokensRevocados { get; set; }
 
+    public virtual DbSet<Reporte> Reportes { get; set; }
+
     public virtual DbSet<Role> Roles { get; set; }
 
     public virtual DbSet<Sectore> Sectores { get; set; }
@@ -74,6 +76,39 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("fk_tokens_revocados_usuarios");
             entity.HasIndex(token => token.ExpiraEn, "ix_tokens_revocados_expira_en");
+        });
+
+        modelBuilder.Entity<Reporte>(entity =>
+        {
+            entity.HasKey(reporte => reporte.IdReporte).HasName("reportes_pkey");
+            entity.ToTable("reportes");
+            entity.Property(reporte => reporte.IdReporte)
+                .UseIdentityAlwaysColumn()
+                .HasColumnName("id_reporte");
+            entity.Property(reporte => reporte.IdAnalisis).HasColumnName("id_analisis");
+            entity.Property(reporte => reporte.IdUsuario).HasColumnName("id_usuario");
+            entity.Property(reporte => reporte.IncluirMapas).HasColumnName("incluir_mapas");
+            entity.Property(reporte => reporte.IncluirProveedores).HasColumnName("incluir_proveedores");
+            entity.Property(reporte => reporte.FechaGeneracion)
+                .HasColumnType("timestamp with time zone")
+                .HasColumnName("fecha_generacion");
+            entity.Property(reporte => reporte.NombreArchivo)
+                .HasMaxLength(255)
+                .HasColumnName("nombre_archivo");
+            entity.Property(reporte => reporte.ArchivoPdf)
+                .HasColumnType("bytea")
+                .HasColumnName("archivo_pdf");
+            entity.HasOne(reporte => reporte.IdAnalisisNavigation)
+                .WithMany()
+                .HasForeignKey(reporte => reporte.IdAnalisis)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk_reportes_analisis");
+            entity.HasOne(reporte => reporte.IdUsuarioNavigation)
+                .WithMany()
+                .HasForeignKey(reporte => reporte.IdUsuario)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk_reportes_usuarios");
+            entity.HasIndex(reporte => new { reporte.IdUsuario, reporte.FechaGeneracion }, "ix_reportes_usuario_fecha");
         });
 
         modelBuilder.Entity<RecomendacionZonaDto>(entity =>
