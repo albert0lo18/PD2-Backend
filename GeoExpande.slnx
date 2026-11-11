@@ -2,4 +2,7 @@
   <Folder Name="/src/">
     <Project Path="src/GeoExpande.Api/GeoExpande.Api.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GeoExpande.Tests/GeoExpande.Tests.csproj" />
+  </Folder>
 </Solution>
