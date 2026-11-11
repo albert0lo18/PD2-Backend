@@ -1,7 +1,9 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using GeoExpande.Api.Dtos;
 using GeoExpande.Api.Models;
+using GeoExpande.Api.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,15 +20,23 @@ public class AnalisisController : ControllerBase
     public AnalisisController(GeoExpandeDbContext context) => _context = context;
 
     [HttpGet("historial")]
-    public async Task<IActionResult> GetHistorial()
+    public async Task<IActionResult> GetHistorial(
+        [FromQuery, Range(1, int.MaxValue)] int page = 1,
+        [FromQuery, Range(1, 100)] int pageSize = 10)
     {
         if (!TryGetAuthenticatedUserId(out var userId))
             return Unauthorized();
 
-        var historial = await _context.Analises
+        var query = _context.Analises
             .AsNoTracking()
-            .Where(a => a.IdUsuario == userId)
+            .Where(a => a.IdUsuario == userId);
+        var totalItems = await query.CountAsync();
+        var skipCount = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
+        var historial = await query
             .OrderByDescending(a => a.FechaInicio)
+            .ThenByDescending(a => a.IdAnalisis)
+            .Skip(skipCount)
+            .Take(pageSize)
             .Select(a => new
             {
                 id = a.IdAnalisis,
@@ -44,7 +54,14 @@ public class AnalisisController : ControllerBase
             })
             .ToListAsync();
 
-        return Ok(historial);
+        return Ok(new
+        {
+            page,
+            pageSize,
+            totalItems,
+            totalPages = (int)Math.Ceiling(totalItems / (double)pageSize),
+            items = historial
+        });
     }
 
     [HttpGet("{analisisId:int}/zonas")]
@@ -52,13 +69,21 @@ public class AnalisisController : ControllerBase
         int analisisId,
         [FromQuery] string nivel = "municipal",
         [FromQuery] int? estadoId = null,
-        [FromQuery] int? municipioId = null)
+        [FromQuery] int? municipioId = null,
+        [FromQuery] double? minLat = null,
+        [FromQuery] double? maxLat = null,
+        [FromQuery] double? minLng = null,
+        [FromQuery] double? maxLng = null)
     {
         if (!TryGetAuthenticatedUserId(out var userId))
             return Unauthorized();
 
-        if (!string.Equals(nivel, "municipal", StringComparison.OrdinalIgnoreCase))
-            return BadRequest("El parámetro nivel solo admite el valor 'municipal'.");
+        nivel = nivel.Trim().ToLowerInvariant();
+        if (nivel is not ("municipal" or "estatal" or "nacional"))
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Nivel geográfico no válido",
+                detail: "El parámetro nivel admite 'municipal', 'estatal' o 'nacional'.");
+        if (!GeographicBoundsValidator.TryValidate(minLat, maxLat, minLng, maxLng, out var boundsError))
+            return BadRequest(boundsError);
 
         var analisisExiste = await _context.Analises
             .AsNoTracking()
@@ -78,6 +103,7 @@ public class AnalisisController : ControllerBase
         var zonas = await query
             .OrderBy(z => z.Ranking ?? int.MaxValue)
             .ThenByDescending(z => z.Puntuacion)
+            .Take(500)
             .Select(z => new
             {
                 idUbicacion = z.IdUbicacion,
@@ -89,6 +115,7 @@ public class AnalisisController : ControllerBase
             })
             .ToListAsync();
 
+        var ubicacionIds = zonas.Select(zona => zona.idUbicacion).ToArray();
         var coordenadas = await _context.Database
             .SqlQuery<UbicacionCoordenadasDto>($"""
                 SELECT
@@ -98,10 +125,13 @@ public class AnalisisController : ControllerBase
                 FROM ubicaciones_recomendadas z
                 JOIN escenarios_expansion escenario ON escenario.id_escenario = z.id_escenario
                 WHERE escenario.id_analisis = {analisisId}
+                    AND z.id_ubicacion = ANY({ubicacionIds})
+                    AND ({minLat} IS NULL OR (ST_Y(z.ubicacion::geometry) BETWEEN {minLat} AND {maxLat}
+                        AND ST_X(z.ubicacion::geometry) BETWEEN {minLng} AND {maxLng}))
                 """)
             .ToDictionaryAsync(punto => punto.IdUbicacion);
 
-        return Ok(zonas.Select(zona => new
+        var zonasConCoordenadas = zonas.Where(zona => coordenadas.ContainsKey(zona.idUbicacion)).Select(zona => new
         {
             zona.idUbicacion,
             zona.idEstado,
@@ -111,20 +141,76 @@ public class AnalisisController : ControllerBase
             puntaje = zona.puntaje,
             latitud = coordenadas[zona.idUbicacion].Lat,
             longitud = coordenadas[zona.idUbicacion].Lng
-        }));
+        }).Where(zona => double.IsFinite(zona.latitud) && double.IsFinite(zona.longitud)
+            && zona.latitud is >= -90 and <= 90 && zona.longitud is >= -180 and <= 180).ToList();
+
+        if (nivel == "municipal")
+            return Ok(zonasConCoordenadas);
+
+        var agrupadas = nivel == "estatal"
+            ? zonasConCoordenadas.GroupBy(zona => new { zona.idEstado, zona.estado })
+                .Select(grupo => new
+                {
+                    nivel,
+                    idEstado = (int?)grupo.Key.idEstado,
+                    estado = (string?)grupo.Key.estado,
+                    idMunicipio = (int?)null,
+                    municipio = (string?)null,
+                    puntaje = grupo.Max(zona => zona.puntaje),
+                    latitud = grupo.Average(zona => zona.latitud),
+                    longitud = grupo.Average(zona => zona.longitud),
+                    zonasAgrupadas = grupo.Count()
+                }).ToList()
+            : zonasConCoordenadas
+                .Select(zona => new
+                {
+                    nivel,
+                    zona.idEstado,
+                    zona.estado,
+                    zona.idMunicipio,
+                    zona.municipio,
+                    zona.puntaje,
+                    zona.latitud,
+                    zona.longitud,
+                    zonasAgrupadas = 1
+                })
+                .GroupBy(_ => 1)
+                .Select(grupo => new
+                {
+                    nivel,
+                    idEstado = (int?)null,
+                    estado = (string?)null,
+                    idMunicipio = (int?)null,
+                    municipio = (string?)null,
+                    puntaje = grupo.Max(zona => zona.puntaje),
+                    latitud = grupo.Average(zona => zona.latitud),
+                    longitud = grupo.Average(zona => zona.longitud),
+                    zonasAgrupadas = grupo.Sum(zona => zona.zonasAgrupadas)
+                }).ToList();
+
+        return Ok(agrupadas);
     }
 
     [HttpGet("{analisisId:int}/puntos-calor")]
     public async Task<IActionResult> GetPuntosCalor(
         int analisisId,
         [FromQuery] string nivel = "municipal",
-        [FromQuery] int? municipioId = null)
+        [FromQuery] int? municipioId = null,
+        [FromQuery] double? minLat = null,
+        [FromQuery] double? maxLat = null,
+        [FromQuery] double? minLng = null,
+        [FromQuery] double? maxLng = null,
+        [FromQuery, Range(0, 22)] int zoom = 10)
     {
         if (!TryGetAuthenticatedUserId(out var userId))
             return Unauthorized();
 
-        if (!string.Equals(nivel, "municipal", StringComparison.OrdinalIgnoreCase))
-            return BadRequest("El parámetro nivel solo admite el valor 'municipal'.");
+        nivel = nivel.Trim().ToLowerInvariant();
+        if (nivel is not ("municipal" or "estatal" or "nacional"))
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Nivel geográfico no válido",
+                detail: "El parámetro nivel admite 'municipal', 'estatal' o 'nacional'.");
+        if (!GeographicBoundsValidator.TryValidate(minLat, maxLat, minLng, maxLng, out var boundsError))
+            return BadRequest(boundsError);
 
         var analisisExiste = await _context.Analises
             .AsNoTracking()
@@ -171,26 +257,43 @@ public class AnalisisController : ControllerBase
                 && e.Latitud >= -90
                 && e.Latitud <= 90
                 && e.Longitud >= -180
-                && e.Longitud <= 180)
+                && e.Longitud <= 180
+                && (!minLat.HasValue || (e.Latitud >= (decimal)minLat.Value && e.Latitud <= (decimal)maxLat!.Value
+                    && e.Longitud >= (decimal)minLng!.Value && e.Longitud <= (decimal)maxLng!.Value)))
+            .OrderBy(e => e.IdEstablecimiento)
             .Select(e => new
             {
                 e.IdMunicipio,
                 latitud = (double)e.Latitud!.Value,
                 longitud = (double)e.Longitud!.Value
             })
+            .Take(5001)
             .ToListAsync();
 
+        var truncated = establecimientos.Count > 5000;
+        if (truncated)
+            establecimientos = establecimientos.Take(5000).ToList();
+
+        var cellSize = Math.Pow(2, 12 - zoom) / 1000d;
         var puntos = establecimientos.Select(establecimiento => new
         {
-            establecimiento.latitud,
-            establecimiento.longitud,
+            latitud = Math.Round(establecimiento.latitud / cellSize) * cellSize,
+            longitud = Math.Round(establecimiento.longitud / cellSize) * cellSize,
             intensidad = Math.Clamp(
                 (double)(puntuacionesPorMunicipio[establecimiento.IdMunicipio] / 100m),
                 0d,
                 1d)
-        });
+        })
+            .GroupBy(punto => (punto.latitud, punto.longitud))
+            .Select(grupo => new
+            {
+                latitud = grupo.Average(punto => punto.latitud),
+                longitud = grupo.Average(punto => punto.longitud),
+                intensidad = grupo.Max(punto => punto.intensidad),
+                cantidad = grupo.Count()
+            });
 
-        return Ok(puntos);
+        return Ok(new { nivel, zoom, maxItems = 5000, truncated, items = puntos });
     }
 
     private bool TryGetAuthenticatedUserId(out int userId)

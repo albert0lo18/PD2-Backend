@@ -10,6 +10,9 @@ using System.IdentityModel.Tokens.Jwt;
 using GeoExpande.Api.Services;
 using Microsoft.AspNetCore.Authentication;
 using GeoExpande.Api.Models;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
+using Microsoft.AspNetCore.Mvc.Filters;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -74,7 +77,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 builder.Services.AddAuthorization();
-builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+builder.Services.AddControllers(options => options.Filters.Add<ApiProblemDetailsFilter>())
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var problem = new ValidationProblemDetails(context.ModelState)
+            {
+                Status = StatusCodes.Status400BadRequest,
+                Title = "La solicitud no es válida",
+                Instance = context.HttpContext.Request.Path
+            };
+            return new BadRequestObjectResult(problem);
+        };
+    });
 
 builder.Services.AddOpenApi(options =>
 {
@@ -82,6 +99,9 @@ builder.Services.AddOpenApi(options =>
 });
 
 var app = builder.Build();
+
+app.UseExceptionHandler();
+app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
@@ -96,6 +116,29 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.Run();
+
+internal sealed class ApiProblemDetailsFilter : IAsyncResultFilter
+{
+    public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
+    {
+        if (context.Result is ObjectResult { Value: string detail, StatusCode: int statusCode }
+            && statusCode >= 400)
+        {
+            context.Result = new ObjectResult(new ProblemDetails
+            {
+                Status = statusCode,
+                Title = statusCode >= 500 ? "Error interno" : "Solicitud no válida",
+                Detail = detail,
+                Instance = context.HttpContext.Request.Path
+            })
+            {
+                StatusCode = statusCode
+            };
+        }
+
+        await next();
+    }
+}
 
 internal sealed class BearerSecuritySchemeTransformer(
     IAuthenticationSchemeProvider authSchemeProvider) : IOpenApiDocumentTransformer

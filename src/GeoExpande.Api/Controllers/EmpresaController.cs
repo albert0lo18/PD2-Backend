@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using GeoExpande.Api.Dtos;
 using GeoExpande.Api.Models;
@@ -151,7 +152,7 @@ public class EmpresaController : ControllerBase
         return Ok(ToPreferenciasDto(preferencias));
     }
 
-    [HttpGet("recomendar-zonas")]
+    [HttpPost("recomendar-zonas")]
     public async Task<IActionResult> RecomendarZonas([FromQuery] RecomendarZonasRequestDto request)
     {
         if (!TryGetAuthenticatedUserId(out var userId))
@@ -162,7 +163,7 @@ public class EmpresaController : ControllerBase
             .FirstOrDefaultAsync(u => u.IdUsuario == userId);
 
         if (usuario?.IdEmpresa is not int empresaId)
-            return NotFound("El usuario no tiene una empresa asociada.");
+            return Problem(statusCode: StatusCodes.Status404NotFound, title: "Empresa no encontrada", detail: "El usuario no tiene una empresa asociada.");
 
         var idGiroEmpresa = await _context.Empresas
             .AsNoTracking()
@@ -170,15 +171,15 @@ public class EmpresaController : ControllerBase
             .Select(empresa => empresa.IdGiro)
             .FirstOrDefaultAsync();
         if (idGiroEmpresa is not int giroEmpresa)
-            return BadRequest("La empresa no tiene un giro configurado en su perfil.");
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Perfil incompleto", detail: "La empresa no tiene un giro configurado en su perfil.");
         if (request.IdGiro != giroEmpresa)
-            return BadRequest("El giro solicitado debe coincidir con el giro configurado en el perfil de la empresa.");
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Giro no válido", detail: "El giro solicitado debe coincidir con el giro configurado en el perfil de la empresa.");
 
         var giro = await _context.Giros
             .AsNoTracking()
             .FirstOrDefaultAsync(giro => giro.IdGiro == giroEmpresa);
         if (giro is null)
-            return BadRequest("El giro indicado no existe.");
+            return Problem(statusCode: StatusCodes.Status400BadRequest, title: "Giro no válido", detail: "El giro indicado no existe.");
 
         var radioKm = request.RadioKm
             ?? await _context.PreferenciasExpansions
@@ -243,7 +244,7 @@ public class EmpresaController : ControllerBase
             if (filasInsertadas == 0)
             {
                 await transaction.RollbackAsync();
-                return NotFound("No se encontraron zonas para generar recomendaciones.");
+                return Problem(statusCode: StatusCodes.Status404NotFound, title: "Sin recomendaciones", detail: "No se encontraron zonas para generar recomendaciones.");
             }
 
             var recomendaciones = await _context.Database
@@ -275,18 +276,32 @@ public class EmpresaController : ControllerBase
                     JOIN estados e ON e.id_estado = z.id_estado
                     JOIN municipios m ON m.id_municipio = z.id_municipio
                     WHERE z.id_escenario = {escenario.IdEscenario}
+                        AND z.ubicacion IS NOT NULL
+                        AND ST_Y(z.ubicacion::geometry) BETWEEN -90 AND 90
+                        AND ST_X(z.ubicacion::geometry) BETWEEN -180 AND 180
                     ORDER BY z.ranking
                     """)
                 .ToListAsync();
 
+            if (recomendaciones.Count == 0 || recomendaciones.Any(zona =>
+                    !double.IsFinite(zona.Lat) || !double.IsFinite(zona.Lng)
+                    || zona.Lat is < -90 or > 90 || zona.Lng is < -180 or > 180))
+            {
+                await transaction.RollbackAsync();
+                return Problem(statusCode: StatusCodes.Status422UnprocessableEntity,
+                    title: "Coordenadas no válidas", detail: "Las zonas generadas no contienen coordenadas geográficas válidas.");
+            }
+
             await transaction.CommitAsync();
-            return Ok(new
+            var response = new
             {
                 idAnalisis = analisis.IdAnalisis,
                 idEscenario = escenario.IdEscenario,
                 zonasGuardadas = recomendaciones.Count,
                 recomendaciones
-            });
+            };
+            return CreatedAtAction(nameof(AnalisisController.GetZonas), "Analisis",
+                new { analisisId = analisis.IdAnalisis }, response);
         }
         catch
         {
