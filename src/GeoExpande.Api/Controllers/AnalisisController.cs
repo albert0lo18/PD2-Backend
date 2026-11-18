@@ -21,8 +21,8 @@ public class AnalisisController : ControllerBase
 
     [HttpGet("historial")]
     public async Task<IActionResult> GetHistorial(
-        [FromQuery, Range(1, int.MaxValue)] int page = 1,
-        [FromQuery, Range(1, 100)] int pageSize = 10)
+        [FromQuery, Range(1, int.MaxValue)] int? page = null,
+        [FromQuery, Range(1, 100)] int? pageSize = null)
     {
         if (!TryGetAuthenticatedUserId(out var userId))
             return Unauthorized();
@@ -30,13 +30,9 @@ public class AnalisisController : ControllerBase
         var query = _context.Analises
             .AsNoTracking()
             .Where(a => a.IdUsuario == userId);
-        var totalItems = await query.CountAsync();
-        var skipCount = (int)Math.Min((long)(page - 1) * pageSize, int.MaxValue);
-        var historial = await query
+        var historialQuery = query
             .OrderByDescending(a => a.FechaInicio)
             .ThenByDescending(a => a.IdAnalisis)
-            .Skip(skipCount)
-            .Take(pageSize)
             .Select(a => new
             {
                 id = a.IdAnalisis,
@@ -51,15 +47,28 @@ public class AnalisisController : ControllerBase
                     .Select(zona => zona.IdMunicipio)
                     .Distinct()
                     .Count()
-            })
+            });
+
+        // El cliente actual consume una lista cuando no solicita paginación.
+        // Se conserva la respuesta paginada para llamadas que envían page o pageSize.
+        if (!page.HasValue && !pageSize.HasValue)
+            return Ok(await historialQuery.ToListAsync());
+
+        var pagina = page ?? 1;
+        var tamanoPagina = pageSize ?? 10;
+        var totalItems = await query.CountAsync();
+        var skipCount = (int)Math.Min((long)(pagina - 1) * tamanoPagina, int.MaxValue);
+        var historial = await historialQuery
+            .Skip(skipCount)
+            .Take(tamanoPagina)
             .ToListAsync();
 
         return Ok(new
         {
-            page,
-            pageSize,
+            page = pagina,
+            pageSize = tamanoPagina,
             totalItems,
-            totalPages = (int)Math.Ceiling(totalItems / (double)pageSize),
+            totalPages = (int)Math.Ceiling(totalItems / (double)tamanoPagina),
             items = historial
         });
     }
@@ -270,8 +279,7 @@ public class AnalisisController : ControllerBase
             .Take(5001)
             .ToListAsync();
 
-        var truncated = establecimientos.Count > 5000;
-        if (truncated)
+        if (establecimientos.Count > 5000)
             establecimientos = establecimientos.Take(5000).ToList();
 
         var cellSize = Math.Pow(2, 12 - zoom) / 1000d;
@@ -293,7 +301,8 @@ public class AnalisisController : ControllerBase
                 cantidad = grupo.Count()
             });
 
-        return Ok(new { nivel, zoom, maxItems = 5000, truncated, items = puntos });
+        // El cliente existente espera una lista directa de puntos.
+        return Ok(puntos.ToList());
     }
 
     private bool TryGetAuthenticatedUserId(out int userId)

@@ -152,8 +152,17 @@ public class EmpresaController : ControllerBase
         return Ok(ToPreferenciasDto(preferencias));
     }
 
+    // GET mantiene compatibilidad con el cliente web actual. POST sigue disponible
+    // para clientes que prefieren expresar esta operación como una acción de escritura.
+    [HttpGet("recomendar-zonas")]
+    public Task<IActionResult> RecomendarZonasGet([FromQuery] RecomendarZonasRequestDto request)
+        => GenerarRecomendaciones(request);
+
     [HttpPost("recomendar-zonas")]
-    public async Task<IActionResult> RecomendarZonas([FromQuery] RecomendarZonasRequestDto request)
+    public Task<IActionResult> RecomendarZonasPost([FromBody] RecomendarZonasRequestDto request)
+        => GenerarRecomendaciones(request);
+
+    private async Task<IActionResult> GenerarRecomendaciones(RecomendarZonasRequestDto request)
     {
         if (!TryGetAuthenticatedUserId(out var userId))
             return Unauthorized();
