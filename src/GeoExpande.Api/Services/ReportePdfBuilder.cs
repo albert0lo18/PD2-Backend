@@ -24,7 +24,10 @@ public sealed record ReportePdfDatos(
     DateTime FechaGeneracion,
     bool IncluirMapas,
     bool IncluirProveedores,
-    IReadOnlyList<ReportePdfZona> Zonas);
+    IReadOnlyList<ReportePdfZona> Zonas,
+    byte[]? MapaJpeg = null,
+    int? MapaAncho = null,
+    int? MapaAlto = null);
 
 /// <summary>
 /// Genera un PDF sencillo con fuentes estándar, evitando depender de archivos
@@ -41,9 +44,9 @@ public sealed class ReportePdfBuilder
         var lineas = CrearContenido(datos);
         var paginas = DividirEnPaginas(lineas, 52);
         if (datos.IncluirMapas)
-            paginas.Add(CrearPaginaMapa(datos.Zonas));
+            paginas.Add(CrearPaginaMapa(datos.Zonas, datos.MapaJpeg is not null));
 
-        return CrearDocumentoPdf(paginas);
+        return CrearDocumentoPdf(paginas, datos.MapaJpeg, datos.MapaAncho, datos.MapaAlto);
     }
 
     private static List<string> CrearContenido(ReportePdfDatos datos)
@@ -85,7 +88,9 @@ public sealed class ReportePdfBuilder
         if (datos.IncluirMapas)
         {
             lineas.Add(string.Empty);
-            lineas.Add("El mapa esquematico de ubicaciones se incluye en la pagina siguiente.");
+            lineas.Add(datos.MapaJpeg is null
+                ? "El mapa esquematico de ubicaciones se incluye en la pagina siguiente."
+                : "La imagen cartografica de las zonas recomendadas se incluye en la pagina siguiente.");
         }
 
         lineas.Add(string.Empty);
@@ -125,12 +130,14 @@ public sealed class ReportePdfBuilder
         return paginas;
     }
 
-    private static List<string> CrearPaginaMapa(IReadOnlyList<ReportePdfZona> zonas)
+    private static List<string> CrearPaginaMapa(IReadOnlyList<ReportePdfZona> zonas, bool incluyeImagen)
     {
         var lineas = new List<string>
         {
-            "MAPA ESQUEMATICO DE UBICACIONES",
-            "Los puntos muestran coordenadas de las zonas recomendadas; no es un mapa base."
+            incluyeImagen ? "MAPA DE ZONAS RECOMENDADAS" : "MAPA ESQUEMATICO DE UBICACIONES",
+            incluyeImagen
+                ? "Las marcas numeradas corresponden al ranking de zonas del analisis."
+                : "Los puntos muestran coordenadas de las zonas recomendadas; no es un mapa base."
         };
         lineas.AddRange(zonas.Select(zona =>
             $"{zona.Ranking}. {zona.Municipio}, {zona.Estado} | {zona.Latitud?.ToString("0.0000", EsMx) ?? "sin latitud"}, {zona.Longitud?.ToString("0.0000", EsMx) ?? "sin longitud"}"));
@@ -145,7 +152,11 @@ public sealed class ReportePdfBuilder
         ? $"{value.Value:0.##}%"
         : "Sin dato";
 
-    private static byte[] CrearDocumentoPdf(IReadOnlyList<List<string>> paginas)
+    private static byte[] CrearDocumentoPdf(
+        IReadOnlyList<List<string>> paginas,
+        byte[]? mapaJpeg,
+        int? mapaAncho,
+        int? mapaAlto)
     {
         var objetos = new List<byte[]> { Array.Empty<byte>(), Array.Empty<byte>(), Array.Empty<byte>() };
         var idsPagina = new List<int>();
@@ -159,19 +170,33 @@ public sealed class ReportePdfBuilder
             objetos.Add(Array.Empty<byte>());
         }
 
+        var idImagenMapa = (int?)null;
+        if (mapaJpeg is { Length: > 0 } && mapaAncho is > 0 && mapaAlto is > 0)
+        {
+            idImagenMapa = objetos.Count + 1;
+            objetos.Add(CrearObjetoImagenJpeg(mapaJpeg, mapaAncho.Value, mapaAlto.Value));
+        }
+
         objetos[0] = Ascii($"<< /Type /Catalog /Pages 2 0 R >>");
         objetos[1] = Ascii($"<< /Type /Pages /Kids [{string.Join(" ", idsPagina.Select(id => $"{id} 0 R"))}] /Count {paginas.Count} >>");
         objetos[2] = Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
 
         for (var i = 0; i < paginas.Count; i++)
         {
-            var contenido = i == paginas.Count - 1 && paginas.Count > 1
-                && paginas[i].FirstOrDefault()?.StartsWith("MAPA ESQUEMATICO", StringComparison.Ordinal) == true
-                ? CrearContenidoMapa(paginas[i])
+            var paginaMapa = i == paginas.Count - 1 && paginas.Count > 1
+                && paginas[i].FirstOrDefault()?.StartsWith("MAPA ", StringComparison.Ordinal) == true;
+            var contenido = paginaMapa
+                ? idImagenMapa.HasValue
+                    ? CrearContenidoMapaConImagen(paginas[i], i + 1, paginas.Count)
+                    : CrearContenidoMapa(paginas[i])
                 : CrearContenidoTexto(paginas[i], i + 1, paginas.Count);
 
+            var recursos = paginaMapa && idImagenMapa.HasValue
+                ? $"/Resources << /Font << /F1 3 0 R >> /XObject << /Mapa {idImagenMapa.Value} 0 R >> >>"
+                : "/Resources << /Font << /F1 3 0 R >> >>";
+
             objetos[idsPagina[i] - 1] = Ascii(
-                $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PageWidth:0} {PageHeight:0}] /Resources << /Font << /F1 3 0 R >> >> /Contents {idsContenido[i]} 0 R >>");
+                $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PageWidth:0} {PageHeight:0}] {recursos} /Contents {idsContenido[i]} 0 R >>");
             objetos[idsContenido[i] - 1] = CrearObjetoFlujo(contenido);
         }
 
@@ -261,6 +286,27 @@ public sealed class ReportePdfBuilder
 
         sb.AppendLine("BT /F1 8 Tf 48 32 Td (GeoExpande - mapa esquematico de ubicaciones recomendadas) Tj ET");
         return Ascii(sb.ToString());
+    }
+
+    private static byte[] CrearContenidoMapaConImagen(IReadOnlyList<string> lineas, int pagina, int totalPaginas)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"BT /F1 15 Tf 48 800 Td ({PdfString(lineas[0])}) Tj ET");
+        sb.AppendLine($"BT /F1 9 Tf 48 782 Td ({PdfString(lineas[1])}) Tj ET");
+        sb.AppendLine("q 499 0 0 291 48 286 cm /Mapa Do Q");
+        sb.AppendLine("0.5 w 48 286 499 291 re S");
+        sb.AppendLine($"BT /F1 8 Tf 48 32 Td (GeoExpande - pagina {pagina} de {totalPaginas}) Tj ET");
+        return Ascii(sb.ToString());
+    }
+
+    private static byte[] CrearObjetoImagenJpeg(byte[] jpeg, int width, int height)
+    {
+        using var salida = new MemoryStream();
+        Escribir(salida, Ascii(
+            $"<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {jpeg.Length} >>\nstream\n"));
+        Escribir(salida, jpeg);
+        Escribir(salida, Ascii("\nendstream"));
+        return salida.ToArray();
     }
 
     private static ZonaMapa? ParsearLineaMapa(string linea)

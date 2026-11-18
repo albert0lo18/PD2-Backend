@@ -47,6 +47,28 @@ public class ReportesController : ControllerBase
         if (analisis is null)
             return NotFound("No se encontró el análisis solicitado.");
 
+        byte[]? mapaJpeg = null;
+        if (!string.IsNullOrWhiteSpace(request.MapaJpegBase64))
+        {
+            if (!request.IncluirMapas)
+                return BadRequest("La imagen del mapa solo se admite cuando IncluirMapas está activado.");
+            if (!request.MapaAncho.HasValue || !request.MapaAlto.HasValue)
+                return BadRequest("La imagen del mapa debe incluir ancho y alto.");
+
+            try
+            {
+                mapaJpeg = Convert.FromBase64String(request.MapaJpegBase64);
+            }
+            catch (FormatException)
+            {
+                return BadRequest("La imagen del mapa no tiene un formato Base64 válido.");
+            }
+
+            if (mapaJpeg.Length < 4 || mapaJpeg[0] != 0xFF || mapaJpeg[1] != 0xD8
+                || mapaJpeg[^2] != 0xFF || mapaJpeg[^1] != 0xD9)
+                return BadRequest("La imagen del mapa debe ser un JPEG válido.");
+        }
+
         var zonas = await _context.Database.SqlQuery<ReporteZonaQueryDto>($"""
             SELECT
                 COALESCE(z.ranking, 2147483647) AS "Ranking",
@@ -91,7 +113,10 @@ public class ReportesController : ControllerBase
                 zona.ProveedoresCercanos,
                 zona.PuntuacionProveedores,
                 zona.Latitud,
-                zona.Longitud)).ToList()));
+                zona.Longitud)).ToList(),
+            mapaJpeg,
+            request.MapaAncho,
+            request.MapaAlto));
 
         var reporte = new Reporte
         {
