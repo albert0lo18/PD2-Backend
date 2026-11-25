@@ -36,6 +36,10 @@ public partial class GeoExpandeDbContext : DbContext
 
     public virtual DbSet<TokenRevocado> TokensRevocados { get; set; }
 
+    public virtual DbSet<EmailVerificationCode> EmailVerificationCodes { get; set; }
+
+    public virtual DbSet<PasswordResetCode> PasswordResetCodes { get; set; }
+
     public virtual DbSet<Reporte> Reportes { get; set; }
 
     public virtual DbSet<Role> Roles { get; set; }
@@ -56,6 +60,36 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
 }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<EmailVerificationCode>(entity =>
+        {
+            entity.HasKey(code => code.IdUsuario).HasName("email_verification_codes_pkey");
+            entity.ToTable("email_verification_codes");
+            entity.Property(code => code.IdUsuario).HasColumnName("id_usuario");
+            entity.Property(code => code.CodigoHash).HasMaxLength(64).HasColumnName("codigo_hash");
+            entity.Property(code => code.ExpiraEn).HasColumnType("timestamp with time zone").HasColumnName("expira_en");
+            entity.Property(code => code.CreadoEn).HasColumnType("timestamp with time zone").HasColumnName("creado_en");
+            entity.Property(code => code.Intentos).HasColumnName("intentos");
+            entity.HasOne(code => code.Usuario).WithOne()
+                .HasForeignKey<EmailVerificationCode>(code => code.IdUsuario)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk_email_verification_codes_usuarios");
+        });
+
+        modelBuilder.Entity<PasswordResetCode>(entity =>
+        {
+            entity.HasKey(code => code.IdUsuario).HasName("password_reset_codes_pkey");
+            entity.ToTable("password_reset_codes");
+            entity.Property(code => code.IdUsuario).HasColumnName("id_usuario");
+            entity.Property(code => code.CodigoHash).HasMaxLength(64).HasColumnName("codigo_hash");
+            entity.Property(code => code.ExpiraEn).HasColumnType("timestamp with time zone").HasColumnName("expira_en");
+            entity.Property(code => code.CreadoEn).HasColumnType("timestamp with time zone").HasColumnName("creado_en");
+            entity.Property(code => code.Intentos).HasColumnName("intentos");
+            entity.HasOne(code => code.Usuario).WithOne()
+                .HasForeignKey<PasswordResetCode>(code => code.IdUsuario)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk_password_reset_codes_usuarios");
+        });
+
         modelBuilder.Entity<TokenRevocado>(entity =>
         {
             entity.HasKey(token => token.JtiHash).HasName("tokens_revocados_pkey");
@@ -204,6 +238,7 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
                 .HasColumnName("id_empresa");
             entity.Property(e => e.Activo)
                 .HasDefaultValue(true)
+                .HasSentinel(true)
                 .HasColumnName("activo");
             entity.Property(e => e.CiudadBase)
                 .HasMaxLength(150)
@@ -658,6 +693,7 @@ protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
                 .HasColumnName("id_usuario");
             entity.Property(e => e.Activo)
                 .HasDefaultValue(true)
+                .HasSentinel(true)
                 .HasColumnName("activo");
             entity.Property(e => e.Apellido)
                 .HasMaxLength(100)

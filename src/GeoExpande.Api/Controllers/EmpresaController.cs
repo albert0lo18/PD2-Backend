@@ -56,13 +56,25 @@ public class EmpresaController : ControllerBase
         if (!giroPerteneceAlSector)
             return BadRequest("El giro seleccionado no pertenece al sector indicado.");
 
+        if (dto.Tamano is not null)
+        {
+            var tamano = string.IsNullOrWhiteSpace(dto.Tamano) ? null : dto.Tamano.Trim();
+            if (tamano is not null && tamano is not ("Micro" or "Pequeña" or "Mediana" or "Grande"))
+                return BadRequest("El tamaño de la empresa no es válido.");
+            empresa.Tamano = tamano;
+        }
+        else if (string.IsNullOrWhiteSpace(empresa.Tamano))
+        {
+            // Corrige registros antiguos con cadena vacía; el CHECK de la base solo admite NULL o tamaños válidos.
+            empresa.Tamano = null;
+        }
+
         empresa.Correo = dto.Correo;
         empresa.RazonSocial = dto.RazonSocial;
         empresa.NombreComercial = dto.NombreComercial;
         empresa.CiudadBase = dto.CiudadBase;
         empresa.IdSector = dto.IdSector;
         empresa.IdGiro = dto.IdGiro;
-        empresa.Tamano = dto.Tamano;
         empresa.DescripcionNegocio = dto.DescripcionNegocio;
 
         await _context.SaveChangesAsync();
