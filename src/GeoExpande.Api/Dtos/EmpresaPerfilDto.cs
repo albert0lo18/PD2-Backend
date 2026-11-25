@@ -8,6 +8,6 @@ public class EmpresaPerfilDto
     public string CiudadBase { get; set; } = null!;
     public int IdSector { get; set; }
     public int IdGiro { get; set; }
-    public string Tamano { get; set; } = null!;
+    public string? Tamano { get; set; }
     public string DescripcionNegocio { get; set; } = null!;
 }

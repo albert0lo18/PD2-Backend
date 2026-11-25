@@ -2,6 +2,16 @@ using System.ComponentModel.DataAnnotations;
 
 namespace GeoExpande.Api.Dtos;
 
+public sealed class OptionalUrlAttribute : ValidationAttribute
+{
+    public override bool IsValid(object? value)
+    {
+        if (value is null || value is string text && string.IsNullOrWhiteSpace(text))
+            return true;
+        return new UrlAttribute().IsValid(value);
+    }
+}
+
 public class RegisterRequestDto
 {
     [Required, StringLength(100, MinimumLength = 1)]
@@ -39,7 +49,7 @@ public class RegisterRequestDto
     public string? Telefono { get; set; }
 
     [StringLength(250)]
-    [Url]
+    [OptionalUrl]
     public string? SitioWeb { get; set; }
 }
 
@@ -50,6 +60,46 @@ public class LoginRequestDto
 
     [Required, StringLength(72, MinimumLength = 1)]
     public string Password { get; set; } = null!;
+}
+
+public class VerifyEmailRequestDto
+{
+    [Required, EmailAddress, StringLength(150)]
+    public string Correo { get; set; } = null!;
+
+    [Required, RegularExpression(@"^\d{4}$", ErrorMessage = "La clave debe tener 4 dígitos.")]
+    public string Codigo { get; set; } = null!;
+}
+
+public class ResendVerificationRequestDto
+{
+    [Required, EmailAddress, StringLength(150)]
+    public string Correo { get; set; } = null!;
+}
+
+public class ForgotPasswordRequestDto
+{
+    [Required, EmailAddress, StringLength(150)]
+    public string Correo { get; set; } = null!;
+}
+
+public class ResetPasswordRequestDto
+{
+    [Required, EmailAddress, StringLength(150)]
+    public string Correo { get; set; } = null!;
+
+    [Required, RegularExpression(@"^\d{4}$", ErrorMessage = "El código debe tener 4 dígitos.")]
+    public string Codigo { get; set; } = null!;
+
+    [Required, StringLength(72, MinimumLength = 12)]
+    public string Password { get; set; } = null!;
+}
+
+public class RegisterResponseDto
+{
+    public string Correo { get; set; } = null!;
+    public string Mensaje { get; set; } = null!;
+    public bool CorreoEnviado { get; set; }
 }
 
 public class AuthResponseDto
