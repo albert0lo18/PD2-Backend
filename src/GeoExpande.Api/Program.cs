@@ -20,6 +20,7 @@ builder.Services.AddDbContext<GeoExpandeDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<TokenService>();
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<EmailVerificationService>();
 builder.Services.AddSingleton<ReportePdfBuilder>();
 
