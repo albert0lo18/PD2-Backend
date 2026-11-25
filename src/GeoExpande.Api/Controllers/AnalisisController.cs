@@ -125,8 +125,11 @@ public class AnalisisController : ControllerBase
             .ToListAsync();
 
         var ubicacionIds = zonas.Select(zona => zona.idUbicacion).ToArray();
-        var coordenadas = await _context.Database
-            .SqlQuery<UbicacionCoordenadasDto>($"""
+        if (ubicacionIds.Length == 0)
+            return Ok(Array.Empty<object>());
+
+        var coordenadasQuery = minLat.HasValue
+            ? _context.Database.SqlQuery<UbicacionCoordenadasDto>($"""
                 SELECT
                     z.id_ubicacion AS "IdUbicacion",
                     ST_Y(z.ubicacion::geometry) AS "Lat",
@@ -135,9 +138,21 @@ public class AnalisisController : ControllerBase
                 JOIN escenarios_expansion escenario ON escenario.id_escenario = z.id_escenario
                 WHERE escenario.id_analisis = {analisisId}
                     AND z.id_ubicacion = ANY({ubicacionIds})
-                    AND ({minLat} IS NULL OR (ST_Y(z.ubicacion::geometry) BETWEEN {minLat} AND {maxLat}
-                        AND ST_X(z.ubicacion::geometry) BETWEEN {minLng} AND {maxLng}))
+                    AND ST_Y(z.ubicacion::geometry) BETWEEN {minLat.Value} AND {maxLat!.Value}
+                    AND ST_X(z.ubicacion::geometry) BETWEEN {minLng!.Value} AND {maxLng!.Value}
                 """)
+            : _context.Database.SqlQuery<UbicacionCoordenadasDto>($"""
+                SELECT
+                    z.id_ubicacion AS "IdUbicacion",
+                    ST_Y(z.ubicacion::geometry) AS "Lat",
+                    ST_X(z.ubicacion::geometry) AS "Lng"
+                FROM ubicaciones_recomendadas z
+                JOIN escenarios_expansion escenario ON escenario.id_escenario = z.id_escenario
+                WHERE escenario.id_analisis = {analisisId}
+                    AND z.id_ubicacion = ANY({ubicacionIds})
+                """);
+
+        var coordenadas = await coordenadasQuery
             .ToDictionaryAsync(punto => punto.IdUbicacion);
 
         var zonasConCoordenadas = zonas.Where(zona => coordenadas.ContainsKey(zona.idUbicacion)).Select(zona => new
